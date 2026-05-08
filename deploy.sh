@@ -16,27 +16,18 @@ cd "$DEPLOY_DIR" || { echo "[deploy] 目录不存在: $DEPLOY_DIR"; exit 1; }
 git checkout master
 git pull origin master
 
-# 3. 注入 GitHub Secrets 到 backend.env（CI 环境变量）
-if [ -n "$ARK_API_KEY" ]; then
-  sed -i "s/__ARK_API_KEY__/${ARK_API_KEY}/g" backend.env
-  sed -i "s/__ARK_SEEDANCE_ENDPOINT__/${ARK_SEEDANCE_ENDPOINT}/g" backend.env
-  sed -i "s/__OSS_ACCESS_KEY_ID__/${OSS_ACCESS_KEY_ID}/g" backend.env
-  sed -i "s/__OSS_ACCESS_KEY_SECRET__/${OSS_ACCESS_KEY_SECRET}/g" backend.env
-  echo "[deploy] Secrets 注入完成"
-fi
-
-# 4. 构建 Docker 镜像
+# 3. 构建 Docker 镜像
 docker build -t ${PROJECT_NAME}:latest .
 TAG=$(date +%Y%m%d-%H%M%S)
 docker tag ${PROJECT_NAME}:latest ${PROJECT_NAME}:${TAG}
 echo "[deploy] 镜像构建完成: ${PROJECT_NAME}:${TAG}"
 
-# 5. 重启服务
+# 4. 重启服务
 docker-compose down || true
 docker-compose up -d
 echo "[deploy] 容器启动完成"
 
-# 6. 健康检查
+# 5. 健康检查
 echo "[deploy] 等待服务就绪（最多 ${MAX_WAIT}s）..."
 for i in $(seq 1 $MAX_WAIT); do
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
@@ -44,7 +35,7 @@ for i in $(seq 1 $MAX_WAIT); do
     echo "[deploy] ✅ 健康检查通过 (HTTP 200)"
     exit 0
   fi
-  echo "[deploy] 等待中... ${i}s (HTTP $HTTP_CODE)"
+  echo "[deploy] 等待中... $((i*2))s (HTTP $HTTP_CODE)"
   sleep 2
 done
 
