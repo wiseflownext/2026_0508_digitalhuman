@@ -1,0 +1,79 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./server
+          push: false
+          tags: |
+            ghcr.io/wiseflownext/digitalhuman:latest
+            ghcr.io/wiseflownext/digitalhuman:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run smoke test
+        run: |
+          docker run -d --name smoke-test \
+            -e ARK_API_KEY=test \
+            -e ARK_SEEDANCE_ENDPOINT=test \
+            ghcr.io/wiseflownext/digitalhuman:${{ github.sha }}
+          sleep 5
+          HTTP_CODE=$(docker exec smoke-test curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health || echo "000")
+          docker rm -f smoke-test
+          echo "Smoke test HTTP: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then exit 1; fi
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare backend.env
+        run: |
+          sed -i "s/__ARK_API_KEY__/${{ secrets.ARK_API_KEY }}/" server/backend.env
+          sed -i "s/__ARK_SEEDANCE_ENDPOINT__/${{ secrets.ARK_SEEDANCE_ENDPOINT }}/" server/backend.env
+          sed -i "s/__OSS_ACCESS_KEY_ID__/${{ secrets.OSS_ACCESS_KEY_ID }}/" server/backend.env
+          sed -i "s/__OSS_ACCESS_KEY_SECRET__/${{ secrets.OSS_ACCESS_KEY_SECRET }}/" server/backend.env
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: wiseflownext
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            sudo mkdir -p /opt/digitalhuman/server
+            sudo chown -R wiseflownext:wiseflownext /opt/digitalhuman
+            rsync -az --exclude=.git --exclude='*.db' \
+              ${{ github.workspace }}/server/ \
+              wiseflownext@localhost:/opt/digitalhuman/server/
+            chmod +x /opt/digitalhuman/server/deploy.sh
+            chmod +x /opt/digitalhuman/server/rollback.sh
+            cd /opt/digitalhuman/server
+            bash deploy.sh
