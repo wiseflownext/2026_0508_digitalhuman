@@ -1,9 +1,10 @@
 services:
   digitalhuman-server:
+    image: digitalhuman:latest
+    container_name: digitalhuman-server
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: digitalhuman-server
     ports:
       - "18098:8000"
     volumes:
