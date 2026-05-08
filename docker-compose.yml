@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: digitalhuman-server
     ports:
-      - "18092:8000"
+      - "18098:8000"
     volumes:
       - ./data:/app/data
     env_file:
