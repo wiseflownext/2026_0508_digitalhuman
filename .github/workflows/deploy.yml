@@ -37,20 +37,38 @@ jobs:
           echo "Smoke test HTTP: $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then exit 1; fi
 
+      - name: Prepare deploy package
+        run: |
+          # 注入 secrets 到 backend.env
+          sed -i "s/__ARK_API_KEY__/${{ secrets.ARK_API_KEY }}/" server/backend.env
+          sed -i "s/__ARK_SEEDANCE_ENDPOINT__/${{ secrets.ARK_SEEDANCE_ENDPOINT }}/" server/backend.env
+          sed -i "s/__OSS_ACCESS_KEY_ID__/${{ secrets.OSS_ACCESS_KEY_ID }}/" server/backend.env
+          sed -i "s/__OSS_ACCESS_KEY_SECRET__/${{ secrets.OSS_ACCESS_KEY_SECRET }}/" server/backend.env
+          # 打包（排除 .git 和大文件）
+          tar -czf /tmp/digitalhuman-deploy.tar.gz \
+            --exclude='.git' \
+            --exclude='*.db' \
+            --exclude='__pycache__' \
+            -C server .
+          echo "PACKAGE_SIZE=$(wc -c < /tmp/digitalhuman-deploy.tar.gz)" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digitalhuman-deploy
+          path: /tmp/digitalhuman-deploy.tar.gz
+          retention-days: 1
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Prepare backend.env
-        run: |
-          sed -i "s/__ARK_API_KEY__/${{ secrets.ARK_API_KEY }}/" server/backend.env
-          sed -i "s/__ARK_SEEDANCE_ENDPOINT__/${{ secrets.ARK_SEEDANCE_ENDPOINT }}/" server/backend.env
-          sed -i "s/__OSS_ACCESS_KEY_ID__/${{ secrets.OSS_ACCESS_KEY_ID }}/" server/backend.env
-          sed -i "s/__OSS_ACCESS_KEY_SECRET__/${{ secrets.OSS_ACCESS_KEY_SECRET }}/" server/backend.env
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: digitalhuman-deploy
+          path: /tmp/
 
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1
@@ -61,12 +79,12 @@ jobs:
           port: 22
           script: |
             set -e
+            # 解压到部署目录
             sudo mkdir -p /opt/digitalhuman/server
-            sudo chown -R ubuntu:ubuntu /opt/digitalhuman
-            rsync -az --exclude=.git --exclude='*.db' \
-              ${{ github.workspace }}/server/ \
-              localhost:/opt/digitalhuman/server/
+            sudo tar -xzf /tmp/digitalhuman-deploy.tar.gz -C /opt/digitalhuman/server/
+            sudo chown -R ubuntu:ubuntu /opt/digitalhuman/server/
             chmod +x /opt/digitalhuman/server/deploy.sh
             chmod +x /opt/digitalhuman/server/rollback.sh
+            # 执行部署
             cd /opt/digitalhuman/server
             bash deploy.sh
